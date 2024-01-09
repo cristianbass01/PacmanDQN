@@ -4,12 +4,11 @@ import tensorflow as tf
 from utils import LinearIterator
 from tensorflow import keras
 from tensorflow.keras.layers import Conv2D, Flatten, Dense
-from stable_baselines3.common.atari_wrappers import AtariWrapper
-from stable_baselines3.common.vec_env.base_vec_env import VecEnvWrapper
 from stable_baselines3.common.vec_env.vec_frame_stack import VecFrameStack
 from stable_baselines3.common.env_util import make_atari_env
 from tensorflow.keras.models import Sequential
 import random
+import os
 
 
 gamma = 0.99
@@ -54,6 +53,23 @@ target_update_period = 100
 episode_rew_history = []
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025)
+
+checkpoint_dir = './checkpoints'
+
+# Create the directory if it doesn't exist
+if not os.path.exists(checkpoint_dir):
+    os.makedirs(checkpoint_dir)
+
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=Q)
+checkpoint_interval = 100
+
+# Restore the latest checkpoint if it exists
+if tf.train.latest_checkpoint(checkpoint_dir):
+    checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+    print("Restored from {}".format(tf.train.latest_checkpoint(checkpoint_dir)))
+else:
+    print("Initializing from scratch.")
 
 # Maybe change to MSE
 for step in range(training_steps):
@@ -127,13 +143,12 @@ for step in range(training_steps):
     running_reward = np.mean(episode_rew_history)
     if running_reward > 20:
         print(running_reward)
+        Q.save("./Q_model")
         break
 
-    if step % 1000 == 0:
-        print("Steps passed: ")
-        print(step)
-
-
+    if step % checkpoint_interval == 0:
+        print("Creating checkpoint at step: {}".format(step))
+        checkpoint.save(file_prefix = checkpoint_prefix)
 
 env.close()
 print("Training finished!")
