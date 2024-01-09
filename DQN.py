@@ -12,26 +12,28 @@ import os
 
 
 gamma = 0.99
-training_steps = 1000000
 num_actions = 5
 
-
-episode_rew = 0
-initial_sample_size = 32
-experience_replay = []
+initial_sample_size = 1000
 batch_size = 32
 max_episode_rew_history = 100
 max_replay_size = 100000
-target_update_period = 100
-episode_rew_history = []
+target_update_period = 10
 
+experience_replay = []
+episode_rew_history = []
+episode_count = 0
+episode_rew = 0
+training_episodes = 10000
+running_reward = 0
+q_updated = False
 
 # make_atari_env creates an environment which reduces image sizes
 # clips rewards in the range of -1, 0, 1 and replaces RGB with grayscale
 # VecFrameStack does 4 steps and stackes them on each other so we 
 # can better train seeing how the Pacman moves and how the ghosts move
-#env = VecFrameStack(make_atari_env("ALE/MsPacman-v5", env_kwargs={"render_mode":"human"}), n_stack=4)
-env = VecFrameStack(make_atari_env("ALE/MsPacman-v5"), n_stack=4)
+env = VecFrameStack(make_atari_env("ALE/MsPacman-v5", env_kwargs={"render_mode":"human"}), n_stack=4)
+#env = VecFrameStack(make_atari_env("ALE/MsPacman-v5"), n_stack=4)
 
 # Creates a simple convolutional NN to work with the images
 def create_q_nn(num_actions):
@@ -51,7 +53,7 @@ Q_target = create_q_nn(num_actions)
 # network we train
 Q = create_q_nn(num_actions)
 
-eps_it = LinearIterator(1, 0.1, training_steps/1000 * 10)
+eps_it = LinearIterator(1, 0.1, training_episodes/1000 * 10)
 obs = env.reset().squeeze()
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025)
@@ -82,8 +84,8 @@ else:
 
 with tf.device(device):
     # Maybe change to MSE
-    for step in range(training_steps):
-        eps = eps_it.value(step)
+    while training_episodes >= episode_count:
+        eps = eps_it.value(episode_count)
         if eps >= random.random():
             action = random.randint(0, 4)
         else:
@@ -134,14 +136,17 @@ with tf.device(device):
 
         obs = next_obs
 
-        if step % target_update_period == 0:
-            print("Updating Q_target")
+        if episode_count != 0 and episode_count % target_update_period == 0 and not q_updated:
+            print("Updating Q_target at episode: {}".format(episode_count))
             Q_target.set_weights(Q.get_weights())
+            q_updated = True
 
         if done:
             print("Episode reward: {}".format(episode_rew))
             obs = env.reset().squeeze()
             episode_rew = 0
+            episode_count += 1
+            q_updated = False
             episode_rew_history.append(episode_rew)
         
         if len(experience_replay) > max_replay_size:
@@ -150,14 +155,16 @@ with tf.device(device):
         if len(episode_rew_history) > max_episode_rew_history:
             del episode_rew_history[:1]   
         
-        running_reward = np.mean(episode_rew_history)
+        if len(episode_rew_history) > 0:
+            running_reward = np.mean(episode_rew_history)          
+
         if running_reward > 20:
             print(running_reward)
             Q.save("./Q_model")
             break
 
-        if step % checkpoint_interval == 0 and step != 0:
-            print("Creating checkpoint at step: {}".format(step))
+        if episode_count % checkpoint_interval == 0 and episode_count != 0:
+            print("Creating checkpoint at step: {}".format(episode_count))
             checkpoint.save(file_prefix = checkpoint_prefix)
 
 env.close()
