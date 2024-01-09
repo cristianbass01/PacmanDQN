@@ -12,14 +12,17 @@ from tensorflow.keras.models import Sequential
 import random
 
 
-gamma = 0.99 
+gamma = 0.99
+training_steps = 1000000
+num_actions = 5
+
 
 # make_atari_env creates an environment which reduces image sizes
 # clips rewards in the range of -1, 0, 1 and replaces RGB with grayscale
 # VecFrameStack does 4 steps and stackes them on each other so we 
 # can better train seeing how the Pacman moves and how the ghosts move
-env = VecFrameStack(make_atari_env("ALE/MsPacman-v5", env_kwargs={"render_mode": "human"}), n_stack=4)
-num_actions = env.action_space.n
+#env = VecFrameStack(make_atari_env("ALE/MsPacman-v5", env_kwargs={"render_mode":"human"}), n_stack=4)
+env = VecFrameStack(make_atari_env("ALE/MsPacman-v5"), n_stack=4)
 
 # Creates a simple convolutional NN to work with the images
 def create_q_nn(num_actions):
@@ -39,24 +42,31 @@ Q_target = create_q_nn(num_actions)
 # network we train
 Q = create_q_nn(num_actions)
 
-
-eps_it = LinearIterator(1, 0.1, 1000000)
+eps_it = LinearIterator(1, 0.1, training_steps/1000 * 10)
 obs = env.reset().squeeze()
 episode_rew = 0
 initial_sample_size = 32
 experience_replay = []
 batch_size = 32
+max_episode_rew_history = 100
+max_replay_size = 100000
 target_update_period = 100
+episode_rew_history = []
 
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0)
+optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025)
 
 # Maybe change to MSE
-for step in range(1000000):
+for step in range(training_steps):
     eps = eps_it.value(step)
-    if eps >= random.randrange(0, 1):
-        action = env.action_space.sample()
+    if eps >= random.random():
+        action = random.randint(0, 4)
     else:
-        action = tf.argmax(Q(obs, training=False))
+        # We can also use numpy but this is more efficient
+        tensor_state = tf.convert_to_tensor(obs)
+        # Dimensions need to be expanded cause the model expects a batch/not a single element
+        expanded_state = tf.expand_dims(tensor_state, axis=0)
+        actions = Q(expanded_state, training=False)[0]
+        action = tf.argmax(actions).numpy()
 
     # Made to work with only one environment because I want to use StackedFrames
     # and it doesn't work with non vectorized environments
@@ -66,7 +76,7 @@ for step in range(1000000):
     info = info[0]
     next_obs = next_obs.squeeze()
 
-    experience_replay.append((obs, action, rew, next_obs))
+    experience_replay.append((obs, action, rew, next_obs, done))
 
     episode_rew += rew
 
@@ -77,18 +87,21 @@ for step in range(1000000):
         batch_action = [experience_replay[idx][1] for idx in batch_idx]
         batch_rew = [experience_replay[idx][2] for idx in batch_idx]
         batch_next_state = np.array([experience_replay[idx][3] for idx in batch_idx])
+        batch_done = tf.convert_to_tensor([float(experience_replay[idx][4]) for idx in batch_idx])
 
         # one hot encoded actions
         action_mask = tf.one_hot(batch_action, num_actions)
-        target_val = Q_target.predict(batch_next_state)
+        target_val = Q_target.predict(batch_next_state, verbose=0)
 
         target = batch_rew + gamma * tf.reduce_max(target_val, axis=1)
 
+        # set last value to -1 if we have terminated. The goal is to avoid getting killed
+        target = target * (1 - batch_done) - batch_done
+
         with tf.GradientTape() as tape:
             q_pred = Q(batch_state)
-            q_actions = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
-
-            loss = tf.reduce_mean(tf.square(target - q_actions))
+            q_action = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
+            loss = tf.reduce_mean(tf.square(target - q_action))
         
         grads = tape.gradient(loss, Q.trainable_variables)
         optimizer.apply_gradients(zip(grads, Q.trainable_variables))
@@ -96,9 +109,31 @@ for step in range(1000000):
     obs = next_obs
 
     if step % target_update_period == 0:
+        print("Updating Q_target")
         Q_target.set_weights(Q.get_weights())
 
     if done:
+        print("Episode reward: {}".format(episode_rew))
         obs = env.reset().squeeze()
+        episode_rew = 0
+        episode_rew_history.append(episode_rew)
+       
+    if len(experience_replay) > max_replay_size:
+        del experience_replay[:1] 
+    
+    if len(episode_rew_history) > max_episode_rew_history:
+        del episode_rew_history[:1]   
+    
+    running_reward = np.mean(episode_rew_history)
+    if running_reward > 20:
+        print(running_reward)
+        break
+
+    if step % 1000 == 0:
+        print("Steps passed: ")
+        print(step)
+
+
 
 env.close()
+print("Training finished!")
