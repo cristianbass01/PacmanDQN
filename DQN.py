@@ -7,18 +7,16 @@ from tensorflow.keras.layers import Conv2D, Flatten, Dense
 from stable_baselines3.common.vec_env.vec_frame_stack import VecFrameStack
 from stable_baselines3.common.env_util import make_atari_env
 from tensorflow.keras.models import Sequential
-import random
-import os
-
+import os, psutil, random, gc
 
 gamma = 0.99
 num_actions = 5
 
 initial_sample_size = 1000
 batch_size = 32
-max_replay_size = 100000
-target_update_period = 200
-max_episode_rew_history = target_update_period
+max_episode_rew_history = 100
+max_replay_size = 10000
+target_update_period = 100
 
 experience_replay = []
 episode_rew_history = []
@@ -29,12 +27,34 @@ running_reward = 0
 q_updated = False
 q_checkpoint = False
 
+
+
+
+def cpu_stats():
+    pid = os.getpid()
+    py = psutil.Process(pid)
+    memory_use = py.memory_info()[0] / 2. ** 30
+    return 'memory GB:' + str(np.round(memory_use, 2))
+
+def get_train_fn():
+    @tf.function
+    def train_function(batch_state, action_mask, target, Q, loss_function, optimizer):
+        with tf.GradientTape() as tape:
+            q_pred = Q(batch_state)
+            q_action = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
+            loss = loss_function(target, q_action)
+
+        grads = tape.gradient(loss, Q.trainable_variables)
+        optimizer.apply_gradients(zip(grads, Q.trainable_variables))
+        return loss
+
+    return train_function
+
 # make_atari_env creates an environment which reduces image sizes
 # clips rewards in the range of -1, 0, 1 and replaces RGB with grayscale
 # VecFrameStack does 4 steps and stackes them on each other so we 
 # can better train seeing how the Pacman moves and how the ghosts move
 env = VecFrameStack(make_atari_env("ALE/MsPacman-v5"), n_stack=4)
-#env = VecFrameStack(make_atari_env("ALE/MsPacman-v5"), n_stack=4)
 
 # Creates a simple convolutional NN to work with the images
 def create_q_nn(num_actions):
@@ -57,6 +77,8 @@ Q = create_q_nn(num_actions)
 eps_it = LinearIterator(1, 0.1, training_episodes/100 * 35)
 obs = env.reset().squeeze()
 
+
+train_fn = get_train_fn()
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 loss_function = keras.losses.Huber()
 
@@ -68,11 +90,12 @@ if not os.path.exists(checkpoint_dir):
 
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=Q)
-checkpoint_interval = 10000
+checkpoint_interval = 500
 
 # Restore the latest checkpoint if it exists
 if tf.train.latest_checkpoint(checkpoint_dir):
     checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+    Q_target.set_weights(Q.get_weights())
     print("Restored from {}".format(tf.train.latest_checkpoint(checkpoint_dir)))
 else:
     print("Initializing from scratch.")
@@ -84,9 +107,9 @@ else:
     print("GPU is not available, using CPU instead")
     device = '/CPU:0'
 
-
 with tf.device(device):
     # Maybe change to MSE
+    tf.keras.backend.clear_session()
     while training_episodes >= episode_count:
         eps = eps_it.value(episode_count)
         if eps >= random.random():
@@ -128,18 +151,10 @@ with tf.device(device):
 
             # set last value to -1 if we have terminated. The goal is to avoid getting killed
             target = target * (1 - batch_done) - batch_done
-
-            with tf.GradientTape() as tape:
-                q_pred = Q(batch_state)
-                q_action = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
-                loss = loss_function(target, q_action)
-
-            
-            grads = tape.gradient(loss, Q.trainable_variables)
-            optimizer.apply_gradients(zip(grads, Q.trainable_variables))
+            train_fn(batch_state, action_mask, target, Q, loss_function, optimizer)
 
         obs = next_obs
-
+        
         if len(experience_replay) > max_replay_size:
             del experience_replay[:1] 
         
@@ -158,26 +173,35 @@ with tf.device(device):
         if len(episode_rew_history) > 0:
             running_reward = np.mean(episode_rew_history) 
             
-        if running_reward > 20 and episode_count >= 90:
-            print(running_reward)
-            Q.save("./Q_model")
-            break
-
-        if episode_count != 0 and episode_count % target_update_period == 0 and not q_updated:
-            print("Updating Q_target at episode: {}".format(episode_count))
-            print("Experience replay size: {}".format(len(experience_replay)))
-            print("Running reward for episode: {}".format(running_reward))
-            print("Epsilon: {}".format(eps))
-            with open('running_rewards.txt', 'a') as f:
-                f.write("Running reward at episode: {} {}\n".format(running_reward, episode_count))
-            Q_target.set_weights(Q.get_weights())
-            q_updated = True
+        #if running_reward > 20 and episode_count >= 90:
+        #    print(running_reward)
+        #   Q.save("./Q_model")
+        #    break
     
         if episode_count % checkpoint_interval == 0 and episode_count != 0 and not q_checkpoint:
             q_checkpoint = True
             print("Creating checkpoint at step: {}".format(episode_count))
             checkpoint.save(file_prefix = checkpoint_prefix)
+            tf.keras.backend.clear_session()
+            checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+            Q_target.set_weights(Q.get_weights())
+            
+        if episode_count != 0 and episode_count % target_update_period == 0 and not q_updated:
+            gc.collect()
+            print("Updating Q_target at episode: {}".format(episode_count))
+            print("Experience replay size: {}".format(len(experience_replay)))
+            print("Running reward for episode: {}".format(running_reward))
+            print("Epsilon: {}".format(eps))
+            print("CPU stats: {}".format(cpu_stats()))
+            with open('running_rewards.txt', 'a') as f:
+                f.write("Running reward at episode: {} {}\n".format(running_reward, episode_count))
+            Q_target.set_weights(Q.get_weights())
+            q_updated = True
 
+
+print("Final running reward: {}".format(running_reward))
+with open('running_rewards.txt', 'a') as f:
+    f.write("Running reward at episode: {} last\n".format(running_reward))
 
 Q.save("./Q_model")
 env.close()
