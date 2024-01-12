@@ -27,7 +27,8 @@ running_reward = 0
 q_updated = False
 q_checkpoint = False
 
-
+# Enable or disable double Q DQN
+double_q = True
 
 
 def cpu_stats():
@@ -38,9 +39,25 @@ def cpu_stats():
 
 def get_train_fn():
     @tf.function
-    def train_function(batch_state, action_mask, target, Q, loss_function, optimizer):
+    def train_function(batch_state, batch_done, action_mask, offline_pred, Q, loss_function, optimizer, double_q):
+
+        target_val = offline_pred
+
         with tf.GradientTape() as tape:
             q_pred = Q(batch_state)
+
+            if double_q:
+                actions_using_online_net = tf.argmax(q_pred, axis=1)
+                online_actions = tf.one_hot(actions_using_online_net, num_actions)
+                target_val = tf.reduce_sum(offline_pred * online_actions, axis = 1)
+            else:
+                target_val = tf.reduce_max(offline_pred, axis=1)
+
+            target = batch_rew + gamma * target_val
+            
+            # set last value to -1 if we have terminated. The goal is to avoid getting killed
+            target = tf.stop_gradient(target * (1 - batch_done) - batch_done)
+
             q_action = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
             loss = loss_function(target, q_action)
 
@@ -145,13 +162,9 @@ with tf.device(device):
 
             # one hot encoded actions
             action_mask = tf.one_hot(batch_action, num_actions)
-            target_val = Q_target.predict(batch_next_state, verbose=0)
+            offline_pred = Q_target.predict(batch_next_state, verbose=0)
 
-            target = batch_rew + gamma * tf.reduce_max(target_val, axis=1)
-
-            # set last value to -1 if we have terminated. The goal is to avoid getting killed
-            target = target * (1 - batch_done) - batch_done
-            train_fn(batch_state, action_mask, target, Q, loss_function, optimizer)
+            train_fn(batch_state, batch_done, action_mask, offline_pred, Q, loss_function, optimizer, double_q)
 
         obs = next_obs
         
