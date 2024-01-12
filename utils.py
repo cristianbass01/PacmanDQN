@@ -5,4 +5,4 @@ class LinearIterator:
         self.steps = steps
     
     def value(self, step):
-        return self.start + (self.end - self.start) * step / self.steps
+        return max(self.start + (self.end - self.start) * step / self.steps, self.end)
