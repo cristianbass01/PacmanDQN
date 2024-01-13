@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from utils import LinearIterator
 from tensorflow import keras
-from tensorflow.keras.layers import Conv2D, Flatten, Dense
+from keras.layers import Conv2D, Flatten, Dense
 from stable_baselines3.common.vec_env.vec_frame_stack import VecFrameStack
 from stable_baselines3.common.env_util import make_atari_env
 from tensorflow.keras.models import Sequential
@@ -18,7 +18,7 @@ max_episode_rew_history = 100
 max_replay_size = 10000
 target_update_period = 100
 
-experience_replay = []
+experience_replay = deque(maxlen = max_replay_size)
 episode_rew_history = []
 episode_count = 0
 episode_rew = 0
