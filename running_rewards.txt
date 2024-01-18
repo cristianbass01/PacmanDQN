@@ -1,3 +1,0 @@
-Running reward at episode: 0 6000
-Running reward at episode: 0 6000
-Running reward at episode: 0 6000
