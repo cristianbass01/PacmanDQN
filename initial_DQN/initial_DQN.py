@@ -72,19 +72,19 @@ def cpu_stats():
     memory_use = py.memory_info()[0] / 2. ** 30
     return 'memory GB:' + str(np.round(memory_use, 2))
 
-def get_target_Q(Q, offline_pred, batch_state, batch_rew, batch_done, double_q, num_actions, gamma):
-    target_val = offline_pred
+def get_target_Q(Q, Q_target, batch_next_state, batch_rew, batch_done, double_q, num_actions, gamma):
 
+    offline_pred = Q_target.predict(batch_next_state, verbose=0)
 
     if double_q:
-        double_q_pred = Q(batch_state, training=False)
+        double_q_pred = Q(batch_next_state, training=False)
         actions_using_online_net = tf.argmax(double_q_pred, axis=1)
         online_actions = tf.one_hot(actions_using_online_net, num_actions)
-        target_val = tf.reduce_sum(offline_pred * online_actions, axis = 1)
+        offline_pred = tf.reduce_sum(offline_pred * online_actions, axis = 1)
     else:
-        target_val = tf.reduce_max(offline_pred, axis=1)
+        offline_pred = tf.reduce_max(offline_pred, axis=1)
     
-    target = batch_rew + gamma * target_val
+    target = batch_rew + gamma * offline_pred
         
     # set last value to -1 if we have terminated. The goal is to avoid getting killed
     target = tf.stop_gradient(target * (1 - batch_done) - batch_done)
@@ -94,14 +94,12 @@ def get_target_Q(Q, offline_pred, batch_state, batch_rew, batch_done, double_q, 
 
 def get_train_fn():
     @tf.function
-    def train_function(batch_state, batch_done, batch_rew, action_mask, offline_pred, Q, loss_function, optimizer, double_q, num_actions, gamma):
-
-        target_Q = get_target_Q(Q, offline_pred, batch_state, batch_rew, batch_done, double_q, num_actions, gamma)
+    def train_function(batch_state, action_mask, Q, loss_function, optimizer, target_Q_values):
 
         with tf.GradientTape() as tape:
             q_pred = Q(batch_state)
             q_action = tf.reduce_sum(tf.multiply(q_pred, action_mask), axis=1)
-            loss = loss_function(target_Q, q_action)
+            loss = loss_function(target_Q_values, q_action)
 
         grads = tape.gradient(loss, Q.trainable_variables)
         optimizer.apply_gradients(zip(grads, Q.trainable_variables))
@@ -217,10 +215,8 @@ with tf.device(get_device()):
             
             # one hot encoded actions
             action_mask = tf.one_hot(batch_action, num_actions)
-            offline_pred = Q_target.predict(batch_next_state, verbose=0)
-
-            train_fn(batch_state, batch_done, batch_rew, action_mask, offline_pred, Q,
-                      loss_function, optimizer, double_q, num_actions, gamma)
+            target_Q = get_target_Q(Q, Q_target, batch_next_state, batch_rew, batch_done, double_q, num_actions, gamma)
+            train_fn(batch_state, action_mask, Q, loss_function, optimizer, target_Q)
 
         obs = next_obs.squeeze()
         
