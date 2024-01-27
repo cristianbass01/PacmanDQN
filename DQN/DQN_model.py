@@ -47,10 +47,8 @@ class DQNmodel:
         self.checkpoint_dir = checkpoint_dir
         
         self.dqn_type = dqn_type
-        if self.dqn_type in ["vanilla", "double", "clipped_double"]:        
-            self.save_model_to += "_" + self.dqn_type
-        else:
-            raise ValueError("Invalid DQN type: " + self.dqn_type + ". Valid types are: vanilla, double, dueling, noisy")
+        if not self.dqn_type in ["vanilla", "double", "clipped_double"]:        
+            raise ValueError("Invalid DQN type: " + self.dqn_type + ". Valid types are: vanilla, double, clipped_double")
         
         # Create the directory if it doesn't exist
         if not os.path.exists(self.checkpoint_dir):

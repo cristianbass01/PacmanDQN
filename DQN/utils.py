@@ -146,7 +146,6 @@ class LogData:
         print(f"Episode Score Mean: {self.ep_score_mean()}")
         print(f"Exploration Rate: {self.data[-1]['eps']}")
         print(f"Episodes: {self.episodes()}")
-        print(f"Frame per second: {self.fps()}")
         print(f"Time Elapsed: {self.data[-1]['time']} seconds")
         print(f"Total Timesteps: {self.data[-1]['timesteps']}")
         print(f"CPU Memory Usage: {cpu_stat[0]} GB")
