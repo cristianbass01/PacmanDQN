@@ -11,6 +11,10 @@ from stable_baselines3.common.vec_env import VecVideoRecorder
 
 from DQN.utils import CustomModel, ExperienceReplay, LinearIterator, LogData
 
+from IPython import display as ipythondisplay
+from pyvirtualdisplay import Display
+from PIL import Image
+import time
 
 class DQNmodel:
     def __init__(self,
@@ -30,9 +34,9 @@ class DQNmodel:
                 update_target_Q_every_n_steps: int = 10000, 
                 save_checkpoint_every_n_steps: int = 100000,
                 log_every_n_episodes: int = 50,
-                exploration_fraction: float = 0.4,
+                exploration_fraction: float = 0.1,
                 exploration_initial_eps: float = 1.0,
-                exploration_final_eps: float = 0.2,
+                exploration_final_eps: float = 0.05,
                 max_grad_norm: float = 10,
                 avoid_finish_episode: bool = True,
                 record: bool = False,
@@ -89,14 +93,14 @@ class DQNmodel:
         self.checkpoint_manager = tf.train.CheckpointManager(self.checkpoint, self.checkpoint_dir, max_to_keep=1)
 
         if self.checkpoint_manager.latest_checkpoint:
-            self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
+            self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint).expect_partial()
             print("Restored from {}".format(self.checkpoint_manager.latest_checkpoint))
         
         # Initialize buffer
-        self.experience_replay = ExperienceReplay(self.buffer_size)
+        self.experience_replay = None
 
         # Initialize logs
-        self.log = LogData(self.checkpoint_dir, self.learning_rate, self.n_env, self.n_stack)
+        self.log = None
 
         # Load model if needed
         if load_model_from is not None: 
@@ -119,8 +123,6 @@ class DQNmodel:
 
             grads = tape.gradient(loss, self.Q_online.trainable_variables)
             
-            # Clip gradient norm
-            grads = [tf.clip_by_norm(g, self.max_grad_norm) for g in grads if g is not None]
             self.optimizer.apply_gradients(zip(grads, self.Q_online.trainable_variables))
 
             return loss
@@ -130,6 +132,14 @@ class DQNmodel:
     def train(self, total_timesteps):
         # Initialize experience replay
         eps_it = LinearIterator(self.exploration_initial_eps, self.exploration_final_eps, total_timesteps * self.exploration_fraction)
+
+        # Initialize logs
+        if self.log is None:
+            self.log = LogData(self.checkpoint_dir, self.learning_rate, self.n_env, self.n_stack)
+
+        # Initialize experience replay
+        if self.experience_replay is None:
+            self.experience_replay = ExperienceReplay(self.buffer_size)
 
         # Initialize device
         if tf.config.list_physical_devices('GPU'):
@@ -232,6 +242,8 @@ class DQNmodel:
                     
                 losses.append(loss.numpy())
 
+                self.checkpoint.step.assign_add(1)
+
                 for i in range(self.n_env):
                     if dones[i]:
                         if infos[i]['lives'] == 0 or infos[i]['TimeLimit.truncated']:
@@ -250,15 +262,12 @@ class DQNmodel:
                                 pbar.close()
                                 pbar = tqdm(total=self.log_every_n_episodes, desc="Training", unit="episode")    
                     
-                    obs[i] = next_obs[i]
+                obs = next_obs
                 
-                self.checkpoint.step.assign_add(1)
-
                 # Update the target network
                 if int(self.checkpoint.step) % self.update_target_Q_every_n_steps == 0:
                     new_weights = [(1 - self.tau) * target + self.tau * online for target, online in zip(self.Q_target.get_weights(), self.Q_online.get_weights())]
                     self.Q_target.set_weights(new_weights)
-                    gc.collect()
                     n_updates += 1
 
                 # Save checkpoint                   
@@ -266,12 +275,11 @@ class DQNmodel:
                     # Save checkpoint
                     self.checkpoint_manager.save()
                     self.log.free_space_saving_data()
-                    gc.collect()
 
             self.log.print_statistics()
             
             # Training finished, save the model      
-            print("Saving model and logs")          
+            print("Saving model and logs")
             self.save_model()
             self.checkpoint_manager.save()
             self.log.save_data()
@@ -280,7 +288,7 @@ class DQNmodel:
     def predict(self, obs):
         if self.env is None:
             self.restart_env()
-        return self.experience_replay.get_actions(obs, self.env, self.Q_target, self.exploration_final_eps)
+        return ExperienceReplay.get_actions(obs, self.env, self.Q_target, self.exploration_final_eps)
     
     def evaluate(self, total_episodes):
         if self.env is None:

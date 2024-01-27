@@ -58,7 +58,8 @@ class ExperienceReplay:
                 tensor_state = tf.convert_to_tensor(obs[i])
                 # Dimensions need to be expanded cause the model expects a batch/not a single element
                 expanded_state = tf.expand_dims(tensor_state, axis=0)
-                q_values = Q(expanded_state, training=False)[0]
+                training_values = Q(expanded_state, training=False)
+                q_values = tf.squeeze(training_values)
                 actions[i] = tf.argmax(q_values).numpy()
         
         return actions
@@ -120,9 +121,8 @@ class LogData:
         current_data['eps'] = np.round(float(np.mean(eps_list)), 4)
         current_data['len'] = episode_infos['l']
 
-        current_data['time'] = np.round(time.time() - self.start_time, 2)
         current_data['timesteps'] = step
-        current_data['time_per_episode'] = np.round(episode_infos['t'], 2)
+        current_data['time'] = np.round(episode_infos['t'], 2)
         
         if self.training:
             current_data['learning_rate'] = self.lr
@@ -146,7 +146,6 @@ class LogData:
         print(f"Episode Score Mean: {self.ep_score_mean()}")
         print(f"Exploration Rate: {self.data[-1]['eps']}")
         print(f"Episodes: {self.episodes()}")
-        print(f"Time per episode: {self.ep_time_mean()}")
         print(f"Frame per second: {self.fps()}")
         print(f"Time Elapsed: {self.data[-1]['time']} seconds")
         print(f"Total Timesteps: {self.data[-1]['timesteps']}")
@@ -183,12 +182,6 @@ class LogData:
             window = len(self.data) - self.last_print
 
         return int(np.mean([data['score'] for data in self.data[-window:]]))
-
-    def ep_time_mean(self, window=-1):
-        if window < 0:
-            window = len(self.data) - self.last_print
-
-        return int(np.mean([data['time_per_episode'] for data in self.data[-window:]]))
 
     def episodes(self):
         return len(self.data) + self.initial_size
