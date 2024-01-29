@@ -1,0 +1,1 @@
+[{"reward": 1300, "eps": 0.1, "len": 283, "time": 29230.94, "timesteps": 999591, "cpu_memory": 12.17, "cpu_percent": 40.3, "learning_rate": 0.00025, "loss_mean": 0.22, "n_updates": 0}]
