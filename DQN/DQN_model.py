@@ -102,10 +102,14 @@ class DQNmodel:
 
         # Load model if needed
         if load_model_from is not None: 
-            self.Q_target = self.load_model(load_model_from)
-            self.Q_target.compile(optimizer=self.optimizer, loss=self.loss_function)
+            Q_tmp = self.load_model(load_model_from)
+            if Q_tmp is not None:
+                self.Q_target = Q_tmp
+                self.Q_target.compile(optimizer=self.optimizer, loss=self.loss_function)
         else:
             self.Q_online.set_weights(self.Q_target.get_weights())
+
+        self.predict(self.env.reset())
     
     def _get_train_fn(self):
         @tf.function
