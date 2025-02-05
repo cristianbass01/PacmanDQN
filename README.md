@@ -29,3 +29,6 @@ The DQN model is instantiated with the following parameters:
 - `max_grad_norm`: Maximum norm of gradients during optimization.
 - `dqn_type`: Type of DQN, available "vanilla", "double" and "clipped_double"
 - `avoid_finish_episode`: Flag indicating whether to trying avoid getting killed
+
+## Further informations:
+More details can be found in our "RL_Report".
